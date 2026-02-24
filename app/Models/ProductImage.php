@@ -1,79 +1,70 @@
 <?php
+// app/Models/ProductImage.php
 
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class ProductImage extends Model
 {
-    use HasFactory;
-
     protected $fillable = [
         'product_id',
-        'image_path',
-        'thumbnail_path',
+        'url',
+        'path',
+        'filename',
+        'size',
+        'mime_type',
         'is_main',
-        'sort_order',
-        'alt_text',
-        'metadata',
+        'sort_order'
     ];
 
     protected $casts = [
         'is_main' => 'boolean',
-        'metadata' => 'array',
+        'size' => 'integer',
+        'sort_order' => 'integer'
     ];
 
-    // RELATIONSHIPS
-    public function product()
+    protected $appends = [
+        'full_url',
+        'thumbnail_url'
+    ];
+
+    /**
+     * Relasi ke Product
+     */
+    public function product(): BelongsTo
     {
         return $this->belongsTo(Product::class);
     }
 
-    // ACCESSORS
-    public function getImageUrlAttribute()
+    /**
+     * Get full URL gambar
+     */
+    public function getFullUrlAttribute(): string
     {
-        if ($this->image_path) {
-            return asset('storage/' . $this->image_path);
-        }
-        return null;
+        return $this->url ?? asset('storage/' . $this->path);
     }
 
-    public function getThumbnailUrlAttribute()
+    /**
+     * Get thumbnail URL (bisa ditambahkan logic untuk resize)
+     */
+    public function getThumbnailUrlAttribute(): string
     {
-        if ($this->thumbnail_path) {
-            return asset('storage/' . $this->thumbnail_path);
-        }
-        return $this->image_url;
+        // Implementasi thumbnail bisa ditambahkan nanti
+        return $this->full_url;
     }
 
-    // SCOPES
-    public function scopeMain($query)
+    /**
+     * Set sebagai gambar utama
+     */
+    public function setAsMain(): void
     {
-        return $query->where('is_main', true);
-    }
-
-    public function scopeSorted($query)
-    {
-        return $query->orderBy('sort_order')->orderBy('id');
-    }
-
-    // HELPERS
-    public function setAsMain()
-    {
-        // Remove main from other images
+        // Reset gambar utama lain
         $this->product->images()->update(['is_main' => false]);
         
-        // Set this as main
-        $this->update(['is_main' => true]);
-        
-        return $this;
-    }
-
-    public function generateThumbnail()
-    {
-        // Implementation for thumbnail generation
-        // You can use Intervention Image here
-        return $this;
+        // Set gambar ini sebagai utama
+        $this->is_main = true;
+        $this->save();
     }
 }

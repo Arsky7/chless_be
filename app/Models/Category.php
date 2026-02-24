@@ -1,39 +1,32 @@
 <?php
+// app/Models/Category.php
 
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Str;
 
 class Category extends Model
 {
-    use HasFactory, SoftDeletes;
+    use SoftDeletes;
 
+    protected $table = 'categories';
+    
     protected $fillable = [
-        'parent_id',
         'name',
         'slug',
         'description',
-        'image',
-        'icon',
-        'type',
         'is_active',
-        'is_featured',
-        'sort_order',
-        'attributes',
-        'meta_title',
-        'meta_description',
+        'sort_order'
     ];
 
     protected $casts = [
         'is_active' => 'boolean',
-        'is_featured' => 'boolean',
-        'attributes' => 'array',
+        'sort_order' => 'integer'
     ];
 
-    // BOOT
     protected static function boot()
     {
         parent::boot();
@@ -45,97 +38,32 @@ class Category extends Model
         });
     }
 
-    // RELATIONSHIPS
-    public function parent()
+    /**
+     * Relasi ke products
+     */
+    public function products(): HasMany
     {
-        return $this->belongsTo(Category::class, 'parent_id');
+        return $this->hasMany(Product::class, 'category_id');
     }
 
-    public function children()
-    {
-        return $this->hasMany(Category::class, 'parent_id');
-    }
+    /**
+     * HAPUS SEMUA RELASI INI KARENA TIDAK ADA KOLOM parent_id
+     */
+    // public function parent()
+    // {
+    //     return $this->belongsTo(Category::class, 'parent_id');
+    // }
 
-    public function products()
-    {
-        return $this->hasMany(Product::class);
-    }
+    // public function children(): HasMany
+    // {
+    //     return $this->hasMany(Category::class, 'parent_id');
+    // }
 
-    // SCOPES
+    /**
+     * Scope untuk kategori aktif
+     */
     public function scopeActive($query)
     {
         return $query->where('is_active', true);
-    }
-
-    public function scopeFeatured($query)
-    {
-        return $query->where('is_featured', true);
-    }
-
-    public function scopeRoot($query)
-    {
-        return $query->whereNull('parent_id');
-    }
-
-    public function scopeByType($query, $type)
-    {
-        return $query->where('type', $type);
-    }
-
-    // ACCESSORS
-    public function getImageUrlAttribute()
-    {
-        if ($this->image) {
-            return asset('storage/' . $this->image);
-        }
-        return null;
-    }
-
-    public function getBreadcrumbsAttribute()
-    {
-        $breadcrumbs = [];
-        $current = $this;
-        
-        while ($current) {
-            $breadcrumbs[] = $current;
-            $current = $current->parent;
-        }
-        
-        return array_reverse($breadcrumbs);
-    }
-
-    // HELPERS
-    public function getProductCountAttribute()
-    {
-        return $this->products()->count();
-    }
-
-    public function getAllChildrenIds()
-    {
-        $ids = [$this->id];
-        
-        foreach ($this->children as $child) {
-            $ids = array_merge($ids, $child->getAllChildrenIds());
-        }
-        
-        return $ids;
-    }
-
-    public function getDescendantProducts()
-    {
-        $categoryIds = $this->getAllChildrenIds();
-        return Product::whereIn('category_id', $categoryIds);
-    }
-
-    public function updateImage($file)
-    {
-        if ($this->image) {
-            \Storage::delete('public/' . $this->image);
-        }
-        
-        $path = $file->store('categories', 'public');
-        $this->update(['image' => $path]);
-        
-        return $this;
     }
 }

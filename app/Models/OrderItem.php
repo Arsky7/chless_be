@@ -1,4 +1,5 @@
 <?php
+// app/Models/OrderItem.php
 
 namespace App\Models;
 
@@ -9,112 +10,70 @@ class OrderItem extends Model
 {
     protected $fillable = [
         'order_id',
-        'product_size_id',
-        'warehouse_id',
+        'product_id',
+        'product_name',
         'quantity',
         'price',
-        'cost',
-        'discount_amount',
-        'shipped_quantity',
-        'returned_quantity'
+        'subtotal',
+        'size'
     ];
 
     protected $casts = [
         'quantity' => 'integer',
         'price' => 'decimal:2',
-        'cost' => 'decimal:2',
-        'discount_amount' => 'decimal:2',
-        'shipped_quantity' => 'integer',
-        'returned_quantity' => 'integer',
+        'subtotal' => 'decimal:2'
     ];
 
     protected $appends = [
-        'subtotal',
-        'product_name',
-        'size',
-        'sku'
+        'price_formatted',
+        'subtotal_formatted'
     ];
 
-    // ============ RELATIONSHIPS ============
-    
+    /**
+     * Relasi ke Order
+     */
     public function order(): BelongsTo
     {
         return $this->belongsTo(Order::class);
     }
 
-    public function productSize(): BelongsTo
+    /**
+     * Relasi ke Product
+     */
+    public function product(): BelongsTo
     {
-        return $this->belongsTo(ProductSize::class);
+        return $this->belongsTo(Product::class);
     }
 
-    public function warehouse(): BelongsTo
+    /**
+     * Format price ke Rupiah
+     */
+    public function getPriceFormattedAttribute(): string
     {
-        return $this->belongsTo(Warehouse::class);
+        return 'Rp ' . number_format($this->price, 0, ',', '.');
     }
 
-    // ============ ACCESSORS ============
-    
-    public function getSubtotalAttribute()
+    /**
+     * Format subtotal ke Rupiah
+     */
+    public function getSubtotalFormattedAttribute(): string
     {
-        return $this->price * $this->quantity;
+        return 'Rp ' . number_format($this->subtotal, 0, ',', '.');
     }
 
-    public function getProductNameAttribute()
+    /**
+     * Calculate subtotal saat menyimpan
+     */
+    protected static function boot()
     {
-        return $this->productSize->product->name;
-    }
-
-    public function getSizeAttribute()
-    {
-        return $this->productSize->size;
-    }
-
-    public function getSkuAttribute()
-    {
-        return $this->productSize->sku;
-    }
-
-    public function getColorNameAttribute()
-    {
-        return $this->productSize->product->color_name;
-    }
-
-    public function getColorHexAttribute()
-    {
-        return $this->productSize->product->color_hex;
-    }
-
-    public function getRemainingToShipAttribute()
-    {
-        return $this->quantity - $this->shipped_quantity;
-    }
-
-    public function getRemainingToReturnAttribute()
-    {
-        return $this->shipped_quantity - $this->returned_quantity;
-    }
-
-    // ============ HELPERS ============
-    
-    public function ship($quantity)
-    {
-        if ($quantity > $this->remaining_to_ship) {
-            throw new \Exception('Cannot ship more than ordered quantity');
-        }
+        parent::boot();
         
-        $this->increment('shipped_quantity', $quantity);
-        
-        return $this;
-    }
+        static::creating(function ($item) {
+            $item->subtotal = $item->price * $item->quantity;
+        });
 
-    public function markReturned($quantity)
-    {
-        if ($quantity > $this->remaining_to_return) {
-            throw new \Exception('Cannot return more than shipped quantity');
-        }
-        
-        $this->increment('returned_quantity', $quantity);
-        
-        return $this;
+        static::updating(function ($item) {
+            $item->subtotal = $item->price * $item->quantity;
+        });
     }
 }
