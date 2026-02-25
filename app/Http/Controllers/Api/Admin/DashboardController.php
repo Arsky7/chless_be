@@ -129,7 +129,7 @@ class DashboardController extends Controller
             });
 
         // Top products
-        $topProducts = Product::with(['category', 'brand'])
+        $topProducts = Product::with(['category'])
             ->orderBy('sold_count', 'desc')
             ->limit(10)
             ->get()
@@ -266,7 +266,6 @@ class DashboardController extends Controller
             'from_date' => 'nullable|date',
             'to_date' => 'nullable|date|after_or_equal:from_date',
             'category_id' => 'nullable|exists:categories,id',
-            'brand_id' => 'nullable|exists:brands,id',
             'page' => 'nullable|integer|min:1',
             'per_page' => 'nullable|integer|min:1|max:100',
         ]);
@@ -276,15 +275,13 @@ class DashboardController extends Controller
         $perPage = $request->get('per_page', 20);
         $page = $request->get('page', 1);
 
-        $query = Product::with(['category', 'brand']);
+        $query = Product::with(['category']);
 
         if ($request->category_id) {
             $query->where('category_id', $request->category_id);
         }
 
-        if ($request->brand_id) {
-            $query->where('brand_id', $request->brand_id);
-        }
+
 
         $products = $query->get()->map(function($product) use ($fromDate, $toDate) {
             $soldQuantity = OrderItem::whereHas('productSize', function($q) use ($product) {
@@ -310,7 +307,6 @@ class DashboardController extends Controller
                 'name' => $product->name,
                 'sku' => $product->sku,
                 'category' => $product->category?->name,
-                'brand' => $product->brand?->name,
                 'sold_quantity' => (int) $soldQuantity,
                 'total_revenue' => (float) $revenue,
                 'total_revenue_formatted' => 'Rp ' . number_format($revenue, 0, ',', '.'),

@@ -24,7 +24,7 @@ class ProductController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
-        $query = Product::with(['brand', 'category', 'sizes', 'images'])
+        $query = Product::with(['category', 'sizes', 'images'])
             ->where('is_active', true);
 
         // Filter by category
@@ -32,10 +32,7 @@ class ProductController extends Controller
             $query->where('category_id', $request->category_id);
         }
 
-        // Filter by brand
-        if ($request->has('brand_id')) {
-            $query->where('brand_id', $request->brand_id);
-        }
+
 
         // Filter by gender
         if ($request->has('gender')) {
@@ -103,7 +100,7 @@ class ProductController extends Controller
      */
     public function featured(Request $request): JsonResponse
     {
-        $products = Product::with(['brand', 'category', 'sizes', 'images'])
+        $products = Product::with(['category', 'sizes', 'images'])
             ->where('is_active', true)
             ->where('is_featured', true)
             ->orderBy('created_at', 'desc')
@@ -124,7 +121,7 @@ class ProductController extends Controller
      */
     public function bestSelling(Request $request): JsonResponse
     {
-        $products = Product::with(['brand', 'category', 'sizes', 'images'])
+        $products = Product::with(['category', 'sizes', 'images'])
             ->where('is_active', true)
             ->orderBy('sold_count', 'desc')
             ->limit($request->get('limit', 10))
@@ -144,7 +141,7 @@ class ProductController extends Controller
      */
     public function newArrivals(Request $request): JsonResponse
     {
-        $products = Product::with(['brand', 'category', 'sizes', 'images'])
+        $products = Product::with(['category', 'sizes', 'images'])
             ->where('is_active', true)
             ->orderBy('created_at', 'desc')
             ->limit($request->get('limit', 10))
@@ -165,7 +162,6 @@ class ProductController extends Controller
     public function show($slug): JsonResponse
     {
         $product = Product::with([
-            'brand', 
             'category', 
             'sizes' => function($q) {
                 $q->where('is_active', true)->orderBy('size');
@@ -201,7 +197,7 @@ class ProductController extends Controller
     {
         $product = Product::findOrFail($id);
 
-        $related = Product::with(['brand', 'category', 'images'])
+        $related = Product::with(['category', 'images'])
             ->where('id', '!=', $product->id)
             ->where('category_id', $product->category_id)
             ->where('is_active', true)
@@ -227,7 +223,6 @@ class ProductController extends Controller
 
         return DB::transaction(function () use ($request) {
             $product = Product::create([
-                'brand_id' => $request->brand_id,
                 'category_id' => $request->category_id,
                 'name' => $request->name,
                 'slug' => Str::slug($request->name),
@@ -272,7 +267,7 @@ class ProductController extends Controller
             return response()->json([
                 'message' => 'Product created successfully',
                 'success' => true,
-                'data' => new ProductResource($product->load(['brand', 'category', 'sizes', 'images']))
+                'data' => new ProductResource($product->load(['category', 'sizes', 'images']))
             ], 201);
         });
     }
@@ -291,7 +286,6 @@ class ProductController extends Controller
 
         return DB::transaction(function () use ($request, $product) {
             $product->update([
-                'brand_id' => $request->brand_id ?? $product->brand_id,
                 'category_id' => $request->category_id ?? $product->category_id,
                 'name' => $request->name ?? $product->name,
                 'slug' => $request->name ? Str::slug($request->name) : $product->slug,
@@ -320,7 +314,7 @@ class ProductController extends Controller
             return response()->json([
                 'message' => 'Product updated successfully',
                 'success' => true,
-                'data' => new ProductResource($product->load(['brand', 'category', 'sizes', 'images']))
+                'data' => new ProductResource($product->load(['category', 'sizes', 'images']))
             ]);
         });
     }

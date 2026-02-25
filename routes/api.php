@@ -101,6 +101,18 @@ Route::prefix('admin')->middleware($middleware)->group(function () {
         Route::delete('/{customer}', [\App\Http\Controllers\Admin\CustomerController::class, 'destroy']);
         Route::patch('/{customer}/toggle-active', [\App\Http\Controllers\Admin\CustomerController::class, 'toggleActive']);
     });
+
+    // ========================================
+    // RETURN REQUESTS ROUTES
+    // ========================================
+    Route::prefix('returns')->group(function () {
+        Route::get('/stats', [\App\Http\Controllers\Api\Admin\ReturnRequestController::class, 'stats']);
+        Route::get('/', [\App\Http\Controllers\Api\Admin\ReturnRequestController::class, 'index']);
+        Route::post('/', [\App\Http\Controllers\Api\Admin\ReturnRequestController::class, 'store']);
+        Route::get('/{returnRequest}', [\App\Http\Controllers\Api\Admin\ReturnRequestController::class, 'show']);
+        Route::put('/{returnRequest}', [\App\Http\Controllers\Api\Admin\ReturnRequestController::class, 'update']);
+        Route::post('/bulk-action', [\App\Http\Controllers\Api\Admin\ReturnRequestController::class, 'bulkAction']);
+    });
 });
 
 // OPTIONS route untuk CORS preflight
