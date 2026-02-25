@@ -20,40 +20,37 @@ class DashboardController extends Controller
     public function stats()
     {
         try {
-            $today = now()->startOfDay();
-            $yesterday = now()->subDay()->startOfDay();
+            $todayStart = now()->startOfDay();
+            $todayEnd = now()->endOfDay();
+            $yesterdayStart = now()->subDay()->startOfDay();
+            $yesterdayEnd = now()->subDay()->endOfDay();
             
-            // Sales statistics - dengan pengecekan null
-            $salesToday = Order::whereDate('created_at', $today)->sum('total') ?? 0;
-            $salesYesterday = Order::whereDate('created_at', $yesterday)->sum('total') ?? 0;
+            // Stats summary using a single query where possible or optimized indexes
+            $salesToday = Order::whereBetween('created_at', [$todayStart, $todayEnd])->sum('total') ?? 0;
+            $salesYesterday = Order::whereBetween('created_at', [$yesterdayStart, $yesterdayEnd])->sum('total') ?? 0;
             
-            // Order statistics
-            $ordersToday = Order::whereDate('created_at', $today)->count();
-            $ordersYesterday = Order::whereDate('created_at', $yesterday)->count();
+            $ordersToday = Order::whereBetween('created_at', [$todayStart, $todayEnd])->count();
+            $ordersYesterday = Order::whereBetween('created_at', [$yesterdayStart, $yesterdayEnd])->count();
             
-            // Customer statistics
-            $customersToday = User::whereDate('created_at', $today)->count();
-            $customersYesterday = User::whereDate('created_at', $yesterday)->count();
+            $customersToday = User::whereBetween('created_at', [$todayStart, $todayEnd])->count();
+            $customersYesterday = User::whereBetween('created_at', [$yesterdayStart, $yesterdayEnd])->count();
             
-            // Product statistics
-            $productsToday = Product::whereDate('created_at', $today)->count();
-            $productsYesterday = Product::whereDate('created_at', $yesterday)->count();
+            $productsToday = Product::whereBetween('created_at', [$todayStart, $todayEnd])->count();
+            $productsYesterday = Product::whereBetween('created_at', [$yesterdayStart, $yesterdayEnd])->count();
+            
             $totalProducts = Product::count();
             $activeProducts = Product::where('is_active', true)->count();
             
-            // Stock statistics - dengan pengecekan relasi
+            // Stock statistics - Optimized
             $lowStockCount = Product::whereHas('sizes', function ($q) {
-                $q->where('stock', '>', 0)
-                  ->where('stock', '<', 10);
+                $q->where('stock', '>', 0)->where('stock', '<', 10);
             })->count();
             
             $outOfStockCount = Product::whereDoesntHave('sizes', function ($q) {
                 $q->where('stock', '>', 0);
-            })->orWhereHas('sizes', function ($q) {
-                $q->where('stock', '<=', 0);
             })->count();
             
-            // Top products - dengan pengecekan relasi orderItems
+            // Top products - Eager loaded
             $topProducts = Product::with(['category'])
                 ->withCount(['orderItems as sold_count' => function ($q) {
                     $q->select(DB::raw('COALESCE(SUM(quantity), 0)'));
@@ -61,72 +58,42 @@ class DashboardController extends Controller
                 ->orderByDesc('sold_count')
                 ->limit(5)
                 ->get()
-                ->map(function ($product) {
-                    return [
-                        'id' => $product->id,
-                        'name' => $product->name,
-                        'price' => (float) $product->base_price,
-                        'price_formatted' => 'Rp ' . number_format($product->base_price ?? 0, 0, ',', '.'),
-                        'sold_count' => (int) ($product->sold_count ?? 0),
-                        'category' => $product->category?->name ?? 'Uncategorized'
-                    ];
-                });
+                ->map(fn($p) => [
+                    'id' => $p->id,
+                    'name' => $p->name,
+                    'price' => (float) $p->base_price,
+                    'price_formatted' => 'Rp ' . number_format($p->base_price ?? 0, 0, ',', '.'),
+                    'sold_count' => (int) ($p->sold_count ?? 0),
+                    'category' => $p->category?->name ?? 'Uncategorized'
+                ]);
 
-            // Recent orders
+            // Recent orders - Eager loaded
             $recentOrders = Order::with('user')
                 ->latest()
                 ->limit(5)
                 ->get()
-                ->map(function ($order) {
-                    return [
-                        'id' => $order->id,
-                        'order_number' => $order->order_number ?? 'ORD-' . str_pad($order->id, 6, '0', STR_PAD_LEFT),
-                        'customer_name' => $order->user?->name ?? 'Guest',
-                        'total' => (float) ($order->total ?? 0),
-                        'total_formatted' => 'Rp ' . number_format($order->total ?? 0, 0, ',', '.'),
-                        'status' => $order->status ?? 'pending',
-                        'status_label' => $this->getStatusLabel($order->status ?? 'pending'),
-                        'created_at' => $order->created_at ? $order->created_at->diffForHumans() : now()->diffForHumans(),
-                    ];
-                });
-
-            // Weekly sales data
-            $startOfWeek = now()->startOfWeek();
-            $weeklySales = Order::select(
-                    DB::raw('DATE(created_at) as date'),
-                    DB::raw('DAYNAME(created_at) as day_name'),
-                    DB::raw('COUNT(*) as total_orders'),
-                    DB::raw('COALESCE(SUM(total), 0) as total_sales')
-                )
-                ->where('created_at', '>=', $startOfWeek)
-                ->groupBy('date', 'day_name')
-                ->orderBy('date')
-                ->get()
-                ->map(function ($item) {
-                    return [
-                        'date' => $item->date,
-                        'day' => $item->day_name,
-                        'orders' => (int) $item->total_orders,
-                        'sales' => (float) $item->total_sales
-                    ];
-                });
+                ->map(fn($o) => [
+                    'id' => $o->id,
+                    'order_number' => $o->order_number ?? 'ORD-' . str_pad($o->id, 6, '0', STR_PAD_LEFT),
+                    'customer_name' => $o->user?->name ?? 'Guest',
+                    'total' => (float) ($o->total ?? 0),
+                    'total_formatted' => 'Rp ' . number_format($o->total ?? 0, 0, ',', '.'),
+                    'status' => $o->status ?? 'pending',
+                    'status_label' => $this->getStatusLabel($o->status ?? 'pending'),
+                    'created_at' => $o->created_at?->diffForHumans() ?? now()->diffForHumans(),
+                ]);
 
             $response = [
                 'sales' => [
                     'today' => (float) $salesToday,
                     'yesterday' => (float) $salesYesterday,
                     'today_formatted' => 'Rp ' . number_format($salesToday, 0, ',', '.'),
-                    'weekly' => $weeklySales
                 ],
                 'orders' => [
                     'today' => (int) $ordersToday,
                     'yesterday' => (int) $ordersYesterday,
                     'total' => (int) Order::count(),
                     'pending' => (int) Order::where('status', 'pending')->count(),
-                    'processing' => (int) Order::where('status', 'processing')->count(),
-                    'shipped' => (int) Order::where('status', 'shipped')->count(),
-                    'delivered' => (int) Order::where('status', 'delivered')->count(),
-                    'cancelled' => (int) Order::where('status', 'cancelled')->count(),
                 ],
                 'customers' => [
                     'today' => (int) $customersToday,
@@ -138,9 +105,7 @@ class DashboardController extends Controller
                     'yesterday' => (int) $productsYesterday,
                     'total' => (int) $totalProducts,
                     'active' => (int) $activeProducts,
-                    'active_percentage' => $totalProducts > 0 
-                        ? round(($activeProducts / $totalProducts) * 100, 1) 
-                        : 0,
+                    'active_percentage' => $totalProducts > 0 ? round(($activeProducts / $totalProducts) * 100, 1) : 0,
                     'low_stock' => (int) $lowStockCount,
                     'out_of_stock' => (int) $outOfStockCount,
                 ],
@@ -148,21 +113,10 @@ class DashboardController extends Controller
                 'recent_orders' => $recentOrders,
             ];
 
-            return response()->json([
-                'success' => true,
-                'data' => $response
-            ]);
-
+            return response()->json(['success' => true, 'data' => $response]);
         } catch (\Exception $e) {
-            // Log error untuk debugging
             Log::error('Dashboard stats error: ' . $e->getMessage());
-            Log::error('Stack trace: ' . $e->getTraceAsString());
-            
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to load dashboard statistics',
-                'error' => app()->environment('local') ? $e->getMessage() : null
-            ], 500);
+            return response()->json(['success' => false, 'message' => 'Failed to load dashboard statistics'], 500);
         }
     }
 

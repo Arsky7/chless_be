@@ -6,9 +6,13 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\Product;
 use App\Models\Category;
+use App\Models\ProductImage;
+use App\Models\ProductSize;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 
 class ProductController extends Controller
 {
@@ -60,16 +64,27 @@ class ProductController extends Controller
     public function index(Request $request)
     {
         try {
-            $query = Product::with('category')
+            $query = Product::with(['category', 'images', 'sizes'])
                 ->withCount('orderItems as sold_count');
             
             // Filter by category
             if ($request->has('category_id')) {
                 $query->where('category_id', $request->category_id);
+            } elseif ($request->has('category')) {
+                $query->where('category_id', $request->category);
             }
             
-            // Filter by status
-            if ($request->has('is_active')) {
+            // Filter by status (active|low|out) or is_active
+            if ($request->has('status')) {
+                $status = $request->status;
+                if ($status === 'active') {
+                    $query->where('is_active', true)->whereHas('sizes', fn($q) => $q->where('stock', '>', 10));
+                } elseif ($status === 'low') {
+                    $query->whereHas('sizes', fn($q) => $q->where('stock', '>', 0)->where('stock', '<=', 10));
+                } elseif ($status === 'out') {
+                    $query->whereDoesntHave('sizes', fn($q) => $q->where('stock', '>', 0));
+                }
+            } elseif ($request->has('is_active')) {
                 $query->where('is_active', $request->boolean('is_active'));
             }
             
@@ -78,18 +93,20 @@ class ProductController extends Controller
                 $search = $request->search;
                 $query->where(function($q) use ($search) {
                     $q->where('name', 'like', "%{$search}%")
-                      ->orWhere('sku', 'like', "%{$search}%")
-                      ->orWhere('slug', 'like', "%{$search}%");
+                      ->orWhere('sku', 'like', "%{$search}%");
                 });
             }
             
             // Sort
-            $sortField = $request->get('sort_field', 'created_at');
-            $sortDirection = $request->get('sort_direction', 'desc');
-            $query->orderBy($sortField, $sortDirection);
+            $sortBy = $request->get('sortBy', 'newest');
+            if ($sortBy === 'newest') $query->latest();
+            elseif ($sortBy === 'price_low') $query->orderBy('base_price', 'asc');
+            elseif ($sortBy === 'price_high') $query->orderBy('base_price', 'desc');
+            elseif ($sortBy === 'top_selling') $query->orderByDesc('sold_count');
+            else $query->latest();
             
             // Pagination
-            $perPage = $request->get('per_page', 20);
+            $perPage = (int) $request->get('per_page', 12);
             $products = $query->paginate($perPage);
             
             return response()->json([
@@ -130,9 +147,7 @@ class ProductController extends Controller
                 'visibility' => 'in:public,private',
                 'base_price' => 'required|numeric|min:0',
                 'sale_price' => 'nullable|numeric|min:0',
-                'cost_price' => 'nullable|numeric|min:0',
-                'stock_quantity' => 'nullable|integer|min:0',
-                'low_stock_threshold' => 'nullable|integer|min:0',
+                'gender' => 'nullable|string|in:men,women,unisex',
                 'weight' => 'nullable|numeric|min:0',
                 'length' => 'nullable|numeric|min:0',
                 'width' => 'nullable|numeric|min:0',
@@ -142,74 +157,55 @@ class ProductController extends Controller
                 'meta_keywords' => 'nullable|string|max:500',
             ]);
             
-            // Generate slug unik
             $validated['slug'] = $this->generateUniqueSlug($request->name);
-            
-            // Generate SKU jika tidak dikirim
-            if (empty($request->sku)) {
-                $validated['sku'] = $this->generateUniqueSku();
-            } else {
-                // Cek apakah SKU sudah ada
-                if (Product::where('sku', $request->sku)->exists()) {
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'SKU already exists',
-                        'errors' => ['sku' => ['SKU sudah digunakan']]
-                    ], 422);
-                }
-                $validated['sku'] = $request->sku;
-            }
-            
-            // Set default values
+            $validated['sku'] = $request->sku ?: $this->generateUniqueSku();
             $validated['is_featured'] = $request->boolean('is_featured', false);
             $validated['track_inventory'] = $request->boolean('track_inventory', true);
-            $validated['allow_backorders'] = $request->boolean('allow_backorders', false);
-            $validated['is_returnable'] = $request->boolean('is_returnable', true);
             $validated['is_active'] = $request->boolean('is_active', true);
-            $validated['visibility'] = $request->get('visibility', 'public');
             
-            // Validasi sale price tidak lebih besar dari base price
-            if (!empty($validated['sale_price']) && $validated['sale_price'] > $validated['base_price']) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Sale price cannot be greater than base price',
-                    'errors' => ['sale_price' => ['Harga sale tidak boleh lebih besar dari harga base']]
-                ], 422);
-            }
-            
-            // Create product
             $product = Product::create($validated);
             
-            // Handle tags (if you want to store as JSON or separate table)
-            if (!empty($validated['tags'])) {
-                $tags = array_map('trim', explode(',', $validated['tags']));
-                // Simpan tags ke database sesuai kebutuhan
-                // Contoh: $product->syncTags($tags);
+            // Handle Sizes
+            if ($request->has('sizes')) {
+                $sizes = json_decode($request->sizes, true);
+                if (is_array($sizes)) {
+                    foreach ($sizes as $sizeData) {
+                        $product->sizes()->create([
+                            'size' => $sizeData['size'],
+                            'stock' => $sizeData['stock'],
+                            'available_stock' => $sizeData['stock'],
+                        ]);
+                    }
+                }
+            }
+            
+            // Handle Images
+            if ($request->hasFile('images')) {
+                $images = $request->file('images');
+                $isMainArray = $request->get('is_main', []);
+                
+                foreach ($images as $index => $imageFile) {
+                    $path = $imageFile->store('products', 'public');
+                    $isMain = isset($isMainArray[$index]) && $isMainArray[$index] == '1';
+                    
+                    $product->images()->create([
+                        'path' => $path,
+                        'url' => Storage::url($path),
+                        'filename' => $imageFile->getClientOriginalName(),
+                        'mime_type' => $imageFile->getMimeType(),
+                        'size' => $imageFile->getSize(),
+                        'is_main' => $isMain,
+                        'sort_order' => $index,
+                    ]);
+                }
             }
             
             DB::commit();
-            
-            return response()->json([
-                'success' => true,
-                'message' => 'Product created successfully',
-                'data' => $product->load('category')
-            ], 201);
-            
-        } catch (\Illuminate\Validation\ValidationException $e) {
-            DB::rollBack();
-            return response()->json([
-                'success' => false,
-                'message' => 'Validation error',
-                'errors' => $e->errors()
-            ], 422);
-            
+            return response()->json(['success' => true, 'data' => $product->load(['category', 'images', 'sizes'])], 201);
         } catch (\Exception $e) {
             DB::rollBack();
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to create product',
-                'error' => $e->getMessage()
-            ], 500);
+            Log::error('Store product error: ' . $e->getMessage());
+            return response()->json(['success' => false, 'message' => 'Failed to create product', 'error' => $e->getMessage()], 500);
         }
     }
 
@@ -242,7 +238,6 @@ class ProductController extends Controller
         try {
             DB::beginTransaction();
             
-            // Validasi input
             $validated = $request->validate([
                 'name' => 'sometimes|string|max:255',
                 'category_id' => 'sometimes|exists:categories,id',
@@ -251,79 +246,64 @@ class ProductController extends Controller
                 'tags' => 'nullable|string',
                 'is_featured' => 'boolean',
                 'track_inventory' => 'boolean',
-                'allow_backorders' => 'boolean',
-                'is_returnable' => 'boolean',
                 'is_active' => 'boolean',
                 'visibility' => 'in:public,private',
                 'base_price' => 'sometimes|numeric|min:0',
                 'sale_price' => 'nullable|numeric|min:0',
-                'cost_price' => 'nullable|numeric|min:0',
-                'stock_quantity' => 'nullable|integer|min:0',
-                'low_stock_threshold' => 'nullable|integer|min:0',
-                'weight' => 'nullable|numeric|min:0',
-                'length' => 'nullable|numeric|min:0',
-                'width' => 'nullable|numeric|min:0',
-                'height' => 'nullable|numeric|min:0',
-                'meta_title' => 'nullable|string|max:255',
-                'meta_description' => 'nullable|string|max:500',
-                'meta_keywords' => 'nullable|string|max:500',
             ]);
             
-            // Update slug if name changed
             if ($request->has('name') && $request->name !== $product->name) {
                 $validated['slug'] = $this->generateUniqueSlug($request->name);
             }
             
-            // Update SKU if provided and different
-            if ($request->has('sku') && $request->sku !== $product->sku) {
-                if (Product::where('sku', $request->sku)->where('id', '!=', $product->id)->exists()) {
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'SKU already exists',
-                        'errors' => ['sku' => ['SKU sudah digunakan']]
-                    ], 422);
-                }
-                $validated['sku'] = $request->sku;
-            }
-            
-            // Validate sale price
-            $basePrice = $request->get('base_price', $product->base_price);
-            $salePrice = $request->get('sale_price', $product->sale_price);
-            
-            if (!empty($salePrice) && $salePrice > $basePrice) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Sale price cannot be greater than base price',
-                    'errors' => ['sale_price' => ['Harga sale tidak boleh lebih besar dari harga base']]
-                ], 422);
-            }
-            
-            // Update product
             $product->update($validated);
             
+            // Sync Sizes
+            if ($request->has('sizes')) {
+                $sizes = json_decode($request->sizes, true);
+                if (is_array($sizes)) {
+                    $product->sizes()->delete();
+                    foreach ($sizes as $sizeData) {
+                        $product->sizes()->create([
+                            'size' => $sizeData['size'],
+                            'stock' => $sizeData['stock'],
+                            'available_stock' => $sizeData['stock'],
+                        ]);
+                    }
+                }
+            }
+            
+            // Sync Images (Simple: add new ones)
+            if ($request->hasFile('images')) {
+                $images = $request->file('images');
+                $isMainArray = $request->get('is_main', []);
+                
+                foreach ($images as $index => $imageFile) {
+                    $path = $imageFile->store('products', 'public');
+                    $isMain = isset($isMainArray[$index]) && $isMainArray[$index] == '1';
+                    
+                    if ($isMain) {
+                        $product->images()->update(['is_main' => false]);
+                    }
+                    
+                    $product->images()->create([
+                        'path' => $path,
+                        'url' => Storage::url($path),
+                        'filename' => $imageFile->getClientOriginalName(),
+                        'mime_type' => $imageFile->getMimeType(),
+                        'size' => $imageFile->getSize(),
+                        'is_main' => $isMain,
+                        'sort_order' => $product->images()->count(),
+                    ]);
+                }
+            }
+            
             DB::commit();
-            
-            return response()->json([
-                'success' => true,
-                'message' => 'Product updated successfully',
-                'data' => $product->fresh()->load('category')
-            ]);
-            
-        } catch (\Illuminate\Validation\ValidationException $e) {
-            DB::rollBack();
-            return response()->json([
-                'success' => false,
-                'message' => 'Validation error',
-                'errors' => $e->errors()
-            ], 422);
-            
+            return response()->json(['success' => true, 'data' => $product->fresh()->load(['category', 'images', 'sizes'])]);
         } catch (\Exception $e) {
             DB::rollBack();
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to update product',
-                'error' => $e->getMessage()
-            ], 500);
+            Log::error('Update product error: ' . $e->getMessage());
+            return response()->json(['success' => false, 'message' => 'Failed to update product', 'error' => $e->getMessage()], 500);
         }
     }
 

@@ -6,6 +6,7 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Admin\CategoryController;
 use App\Http\Controllers\Admin\ProductController;
 use App\Http\Controllers\Admin\DashboardController;
+use App\Http\Controllers\Admin\InventoryController;
 
 // Public test routes
 Route::prefix('v1')->group(function () {
@@ -46,8 +47,10 @@ Route::prefix('admin')->middleware($middleware)->group(function () {
     // ========================================
     // CATEGORY ROUTES (API Resource)
     // ========================================
-    // Lebih ringkas pakai apiResource
+    // Category stats
+    Route::get('categories/stats', [CategoryController::class, 'stats']);
     Route::apiResource('categories', CategoryController::class);
+
     
     // ========================================
     // PRODUCT ROUTES
@@ -74,6 +77,29 @@ Route::prefix('admin')->middleware($middleware)->group(function () {
         Route::post('/{product}/images', [ProductController::class, 'uploadImages']); // POST /admin/products/{id}/images
         Route::delete('/{product}/images/{image}', [ProductController::class, 'deleteImage']); // DELETE /admin/products/{id}/images/{imageId}
         Route::patch('/{product}/images/{image}/main', [ProductController::class, 'setMainImage']); // PATCH /admin/products/{id}/images/{imageId}/main
+    });
+
+    // ========================================
+    // INVENTORY ROUTES
+    // ========================================
+    Route::prefix('inventory')->group(function () {
+        Route::get('/stats', [InventoryController::class, 'stats']);                  // GET /admin/inventory/stats
+        Route::get('/', [InventoryController::class, 'index']);                       // GET /admin/inventory
+        Route::put('/{inventory}/restock', [InventoryController::class, 'restock']); // PUT /admin/inventory/{id}/restock
+        Route::put('/{inventory}/adjust', [InventoryController::class, 'adjust']);   // PUT /admin/inventory/{id}/adjust
+    });
+
+    // ========================================
+    // CUSTOMER ROUTES
+    // ========================================
+    Route::prefix('customers')->group(function () {
+        Route::get('/stats', [\App\Http\Controllers\Admin\CustomerController::class, 'stats']);
+        Route::get('/', [\App\Http\Controllers\Admin\CustomerController::class, 'index']);
+        Route::post('/', [\App\Http\Controllers\Admin\CustomerController::class, 'store']);
+        Route::get('/{customer}', [\App\Http\Controllers\Admin\CustomerController::class, 'show']);
+        Route::put('/{customer}', [\App\Http\Controllers\Admin\CustomerController::class, 'update']);
+        Route::delete('/{customer}', [\App\Http\Controllers\Admin\CustomerController::class, 'destroy']);
+        Route::patch('/{customer}/toggle-active', [\App\Http\Controllers\Admin\CustomerController::class, 'toggleActive']);
     });
 });
 

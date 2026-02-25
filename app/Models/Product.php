@@ -273,7 +273,7 @@ class Product extends Model
         }
         
         // Default image jika tidak ada gambar
-        return asset('images/no-image.png');
+        return 'https://placehold.co/400x500/f3f4f6/a1a1aa?text=No+Image';
     }
 
     // ======================== SCOPES ========================
