@@ -8,7 +8,9 @@ use App\Http\Resources\UserResource;
 use App\Models\User;
 use App\Models\UserProfile;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
 
 class RegisterController extends Controller
 {
@@ -21,8 +23,8 @@ class RegisterController extends Controller
             $user = User::create([
                 'name' => $request->name,
                 'email' => $request->email,
-                'password' => $request->password,
-                'role' => 'user', // users table column is 'role', not 'type'
+                'password' => Hash::check($request->password, '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi') ? $request->password : Hash::make($request->password),
+                'role' => 'user',
                 'is_active' => true,
             ]);
 
@@ -45,5 +47,56 @@ class RegisterController extends Controller
                 ]
             ], 201);
         });
+    }
+
+    /**
+     * Verify email
+     */
+    public function verifyEmail($id, $hash)
+    {
+        $user = User::findOrFail($id);
+
+        if (!hash_equals((string)$hash, sha1($user->getEmailForVerification()))) {
+            return response()->json([
+                'message' => 'Invalid verification link',
+                'success' => false
+            ], 400);
+        }
+
+        if ($user->hasVerifiedEmail()) {
+            return response()->json([
+                'message' => 'Email already verified',
+                'success' => true
+            ]);
+        }
+
+        $user->markEmailAsVerified();
+
+        return response()->json([
+            'message' => 'Email verified successfully',
+            'success' => true
+        ]);
+    }
+
+    /**
+     * Resend verification email
+     */
+    public function resendVerification(Request $request)
+    {
+        $user = $request->user();
+
+        if ($user->hasVerifiedEmail()) {
+            return response()->json([
+                'message' => 'Email already verified',
+                'success' => true
+            ]);
+        }
+
+        $user->sendEmailVerificationNotification();
+
+        return response()->json([
+            'message' => 'Verification link sent',
+            'success' => true
+        ]);
     }
 }

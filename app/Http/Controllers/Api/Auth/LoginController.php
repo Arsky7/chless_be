@@ -38,7 +38,7 @@ class LoginController extends Controller
         }
 
         $token = $user->createToken('auth-token')->plainTextToken;
-
+        $user->update(['last_login_at' => now(), 'last_login_ip' => $request->ip()]);
 
         return response()->json([
             'message' => 'Login successful',
