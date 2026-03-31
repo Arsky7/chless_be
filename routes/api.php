@@ -15,6 +15,10 @@ use App\Http\Controllers\Api\PublicCategoryController;
 use App\Http\Controllers\Api\Admin\ReturnRequestController;
 use App\Http\Controllers\Api\Admin\OrderController;
 use App\Http\Controllers\Api\Admin\StaffController;
+use App\Http\Controllers\Api\Admin\ShippingController as AdminShippingController;
+use App\Http\Controllers\Api\Admin\PaymentController as AdminPaymentController;
+use App\Http\Controllers\Api\CheckoutController;
+use App\Http\Controllers\Api\WishlistController;
 
 /* |-------------------------------------------------------------------------- | API Routes |-------------------------------------------------------------------------- */
 
@@ -43,6 +47,11 @@ Route::prefix('v1')->group(function () {
                 // Addresses
                 Route::apiResource('addresses', AddressController::class);
                 Route::patch('/addresses/{address}/set-default', [AddressController::class , 'setDefault']);
+
+                // Wishlist
+                Route::get('/wishlists', [WishlistController::class, 'index']);
+                Route::post('/wishlists/toggle', [WishlistController::class, 'toggle']);
+
             }
             );
 
@@ -61,7 +70,22 @@ Route::prefix('v1')->group(function () {
         Route::get('/products/featured', [PublicProductController::class , 'featured']);
         Route::get('/products/new-arrivals', [PublicProductController::class , 'newArrivals']);
         Route::get('/products/{slug}', [PublicProductController::class , 'show']);
-        Route::get('/categories', [PublicCategoryController::class , 'index']);    });
+        Route::get('/categories', [PublicCategoryController::class , 'index']);   
+
+        // Checkout
+        Route::post('/checkout', [CheckoutController::class, 'store']);
+
+        // RajaOngkir Shipping Proxy
+        Route::prefix('shipping')->group(function () {
+            Route::get('/provinces', [\App\Http\Controllers\Api\ShippingController::class, 'provinces']);
+            Route::get('/cities', [\App\Http\Controllers\Api\ShippingController::class, 'cities']);
+            Route::post('/calculate', [\App\Http\Controllers\Api\ShippingController::class, 'calculate']);
+            Route::get('/debug', [\App\Http\Controllers\Api\ShippingController::class, 'debug']); // dev only
+        });
+
+        // Midtrans Webhook
+        Route::post('/payment/notification', [CheckoutController::class, 'notification']);
+    });
 
 // ============================================
 // ADMIN ROUTES - Conditional Auth
@@ -182,12 +206,29 @@ Route::prefix('admin')->middleware($middleware)->group(function () {
             Route::delete('/{staff}', [StaffController::class , 'destroy']);
             Route::patch('/{staff}/status', [StaffController::class , 'updateStatus']);
         }
-        );    });
+        );
 
-// OPTIONS route for CORS preflight
-Route::options('/{any}', function () {
-    return response()->json([], 200);
-})->where('any', '.*');
-Route::options('/{any}', function () {
-    return response()->json([], 200);
-})->where('any', '.*');
+        // ========================================
+        // SHIPPING
+        // ========================================
+        Route::prefix('shipping')->group(function () {
+            Route::get('/stats', [AdminShippingController::class, 'stats']);
+            Route::get('/', [AdminShippingController::class, 'index']);
+            Route::patch('/{order}/tracking', [AdminShippingController::class, 'updateTracking']);
+            Route::patch('/{order}/delivered', [AdminShippingController::class, 'markDelivered']);
+        });
+        // ========================================
+        // PAYMENTS
+        // ========================================
+        Route::prefix('payments')->group(function () {
+            Route::get('/stats', [AdminPaymentController::class, 'stats']);
+            Route::get('/', [AdminPaymentController::class, 'index']);
+        });
+        // ========================================
+        // SETTINGS
+        // ========================================
+        Route::prefix('settings')->group(function () {
+            Route::get('/', [App\Http\Controllers\Api\Admin\SettingController::class, 'index']);
+            Route::put('/', [App\Http\Controllers\Api\Admin\SettingController::class, 'update']);
+        });
+    });

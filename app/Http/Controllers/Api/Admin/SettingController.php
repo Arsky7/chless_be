@@ -3,231 +3,81 @@
 namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
-use App\Http\Requests\Api\Admin\UpdateSettingRequest;
 use App\Models\Setting;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 
 class SettingController extends Controller
 {
     /**
-     * Display all settings.
-     *
-     * @param Request $request
-     * @return JsonResponse
-     */
-    public function index(Request $request): JsonResponse
-    {
-        $this->authorize('viewAny', Setting::class);
-
-        $group = $request->get('group');
-        $query = Setting::query();
-
-        if ($group) {
-            $query->where('group', $group);
-        }
-
-        $settings = $query->orderBy('group')->orderBy('order')->get();
-
-        return response()->json([
-            'success' => true,
-            'data' => $settings->groupBy('group')
-        ]);
-    }
-
-    /**
-     * Display settings by group.
-     *
-     * @param string $group
-     * @return JsonResponse
-     */
-    public function group($group): JsonResponse
-    {
-        $this->authorize('viewAny', Setting::class);
-
-        $settings = Setting::where('group', $group)
-            ->orderBy('order')
-            ->get()
-            ->mapWithKeys(function($item) {
-                return [$item['key'] => $item['value']];
-            });
-
-        return response()->json([
-            'success' => true,
-            'data' => $settings
-        ]);
-    }
-
-    /**
-     * Update settings.
-     *
-     * @param UpdateSettingRequest $request
-     * @return JsonResponse
-     */
-    public function update(UpdateSettingRequest $request): JsonResponse
-    {
-        $this->authorize('update', Setting::class);
-
-        foreach ($request->settings as $key => $value) {
-            Setting::updateOrCreate(
-                ['key' => $key],
-                [
-                    'value' => $value,
-                    'group' => $request->group ?? 'general'
-                ]
-            );
-        }
-
-        // Clear settings cache
-        Cache::forget('app_settings');
-
-        return response()->json([
-            'message' => 'Settings updated successfully',
-            'success' => true
-        ]);
-    }
-
-    /**
-     * Get general settings.
+     * Get all settings as a key-value pair.
      *
      * @return JsonResponse
      */
-    public function general(): JsonResponse
+    public function index(): JsonResponse
     {
-        $settings = Cache::remember('app_settings', 3600, function() {
-            return Setting::pluck('value', 'key')->toArray();
-        });
+        // Transform settings into a flat key-value object
+        $settings = Setting::all()->pluck('value', 'key')->toArray();
 
-        return response()->json([
-            'success' => true,
-            'data' => $settings
-        ]);
-    }
-
-    /**
-     * Get shipping settings.
-     *
-     * @return JsonResponse
-     */
-    public function shipping(): JsonResponse
-    {
-        $settings = Setting::where('group', 'shipping')
-            ->pluck('value', 'key');
-
-        return response()->json([
-            'success' => true,
-            'data' => $settings
-        ]);
-    }
-
-    /**
-     * Get payment settings.
-     *
-     * @return JsonResponse
-     */
-    public function payment(): JsonResponse
-    {
-        $settings = Setting::where('group', 'payment')
-            ->pluck('value', 'key');
-
-        return response()->json([
-            'success' => true,
-            'data' => $settings
-        ]);
-    }
-
-    /**
-     * Get email settings.
-     *
-     * @return JsonResponse
-     */
-    public function email(): JsonResponse
-    {
-        $this->authorize('viewEmailSettings', Setting::class);
-
-        $settings = Setting::where('group', 'email')
-            ->pluck('value', 'key');
-
-        return response()->json([
-            'success' => true,
-            'data' => $settings
-        ]);
-    }
-
-    /**
-     * Update email settings.
-     *
-     * @param Request $request
-     * @return JsonResponse
-     */
-    public function updateEmail(Request $request): JsonResponse
-    {
-        $this->authorize('updateEmailSettings', Setting::class);
-
-        $request->validate([
-            'mail_mailer' => 'required|in:smtp,sendmail,mailgun,ses,postmark',
-            'mail_host' => 'required_if:mail_mailer,smtp',
-            'mail_port' => 'required_if:mail_mailer,smtp|numeric',
-            'mail_username' => 'nullable|string',
-            'mail_password' => 'nullable|string',
-            'mail_encryption' => 'nullable|in:tls,ssl',
-            'mail_from_address' => 'required|email',
-            'mail_from_name' => 'required|string'
-        ]);
-
-        foreach ($request->all() as $key => $value) {
-            if (str_starts_with($key, 'mail_')) {
-                Setting::updateOrCreate(
-                    ['key' => $key],
-                    [
-                        'value' => $value,
-                        'group' => 'email',
-                        'type' => 'string'
-                    ]
-                );
+        // Convert boolean strings to actual booleans if needed
+        foreach ($settings as $key => $value) {
+            if ($value === 'true' || $value === '1') {
+                $settings[$key] = true;
+            } elseif ($value === 'false' || $value === '0') {
+                $settings[$key] = false;
             }
         }
 
-        // Update .env file (would need custom implementation)
-        // $this->updateEnvFile($request->all());
-
         return response()->json([
-            'message' => 'Email settings updated successfully',
-            'success' => true
+            'success' => true,
+            'data' => $settings
         ]);
     }
 
     /**
-     * Test email configuration.
+     * Bulk update settings.
      *
      * @param Request $request
      * @return JsonResponse
      */
-    public function testEmail(Request $request): JsonResponse
+    public function update(Request $request): JsonResponse
     {
-        $this->authorize('testEmail', Setting::class);
+        $settingsPayload = $request->all();
 
-        $request->validate([
-            'email' => 'required|email'
-        ]);
-
+        DB::beginTransaction();
         try {
-            // Send test email
-            \Mail::raw('This is a test email from CHLESS Fashion.', function($message) use ($request) {
-                $message->to($request->email)
-                    ->subject('Test Email from CHLESS');
-            });
+            foreach ($settingsPayload as $key => $value) {
+                // If it's a boolean, convert it to string for DB storage
+                if (is_bool($value)) {
+                    $value = $value ? 'true' : 'false';
+                } elseif (is_array($value)) {
+                    $value = json_encode($value);
+                }
+
+                Setting::updateOrCreate(
+                    ['key' => $key],
+                    [
+                        'value' => (string) $value,
+                        'type' => is_numeric($value) ? 'string' : (is_bool($value) || $value === 'true' || $value === 'false' ? 'boolean' : 'string')
+                    ]
+                );
+            }
+
+            DB::commit();
 
             return response()->json([
-                'message' => 'Test email sent successfully',
-                'success' => true
+                'success' => true,
+                'message' => 'Settings updated successfully',
+                'data' => Setting::all()->pluck('value', 'key')
             ]);
         } catch (\Exception $e) {
+            DB::rollBack();
             return response()->json([
-                'message' => 'Failed to send test email: ' . $e->getMessage(),
-                'success' => false
-            ], 422);
+                'success' => false,
+                'message' => 'Failed to update settings',
+                'error' => $e->getMessage()
+            ], 500);
         }
     }
 }
